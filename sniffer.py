@@ -26,7 +26,8 @@ syn_flood_count = 0
 
 
 port_scan_tracker = defaultdict(set)
-udp_tracker = defaultdict(set)
+udp_tracker = defaultdict(deque)
+udp_last_alert = {}
 icmp_tracker = defaultdict(int)
 syn_tracker = defaultdict(int)
 
@@ -134,28 +135,40 @@ def process_packet(packet):
 
     elif UDP in packet:
 
-        udp_count += 1
-        protocol = "UDP"
+    udp_count += 1
+    protocol = "UDP"
 
-        src_port = packet[UDP].sport
-        dst_port = packet[UDP].dport
+    src_port = packet[UDP].sport
+    dst_port = packet[UDP].dport
 
-        udp_tracker[src_ip].add(dst_port)
+    now = time.monotonic()
 
-        if len(udp_tracker[src_ip]) == 50:
+    udp_tracker[src_ip].append(now)
 
-            udp_attack_count += 1
-            attacker_ips[src_ip] += 1
+    # Keep only packets from the last 10 seconds
+    while udp_tracker[src_ip] and now - udp_tracker[src_ip][0] > 10:
+        udp_tracker[src_ip].popleft()
 
-            location = get_location(src_ip)
+    # Heuristic threshold: 50 UDP packets in 10 seconds
+    if (
+        len(udp_tracker[src_ip]) >= 50
+        and now - udp_last_alert.get(src_ip, 0) > 10
+    ):
 
-            alert = (
-                f"[{time_now}] " f"UDP Flood detected from " f"{src_ip} ({location})"
-            )
+        udp_attack_count += 1
+        attacker_ips[src_ip] += 1
+        udp_last_alert[src_ip] = now
 
-            alerts.append(alert)
+        location = get_location(src_ip)
 
-            attack_timeline.append(alert)
+        alert = (
+            f"[{time_now}] "
+            f"Possible UDP Flood activity from "
+            f"{src_ip} ({location})"
+        )
+
+        alerts.append(alert)
+        attack_timeline.append(alert)
 
     elif ICMP in packet:
 
